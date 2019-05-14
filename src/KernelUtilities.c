@@ -39,12 +39,18 @@
 #define CS_OPS_STATUS 0
 #define CS_OPS_ENTITLEMENTS_BLOB 7
 #define FILE_EXC_KEY "com.apple.security.exception.files.absolute-path.read-only"
+#define MACH_EXC_KEY "com.apple.security.exception.mach-lookup.global-name"
 
 const char *abs_path_exceptions[] = {
     "/Library",
     "/private/var/mobile/Library",
     "/System/Library/Caches",
     "/private/var/mnt",
+    NULL
+};
+
+const char *mach_lookup_exceptions[] = {
+    "cy:com.saurik.substrated",
     NULL
 };
 
@@ -589,21 +595,10 @@ out:;
 
 BOOL set_mach_extension(kptr_t sandbox, const char *exc_key, const char *name) {
     auto ret = NO;
-    auto ext_kptr = KPTR_NULL;
-    auto ext = KPTR_NULL;
     if (!KERN_POINTER_VALID(sandbox) || exc_key == NULL || name == NULL) goto out;
-    ext_kptr = smalloc(sizeof(kptr_t));
-    if (!KERN_POINTER_VALID(ext_kptr)) goto out;
-    auto const ret_extension_create_mach = extension_create_mach(ext_kptr, sandbox, name, 0);
-    if (ret_extension_create_mach != 0) goto out;
-    ext = ReadKernel64(ext_kptr);
-    if (!KERN_POINTER_VALID(ext)) goto out;
-    auto const ret_extension_add = extension_add(ext, sandbox, exc_key);
-    if (ret_extension_add != 0) goto out;
+    if (issue_extension_for_mach_service(sandbox, KPTR_NULL, name, (void *)exc_key) != 0) goto out;
     ret = YES;
 out:;
-    if (KERN_POINTER_VALID(ext)) extension_release(ext_kptr); ext = KPTR_NULL;
-    if (KERN_POINTER_VALID(ext_kptr)) sfree(ext_kptr); ext_kptr = KPTR_NULL;
     return ret;
 }
 
@@ -974,7 +969,7 @@ out:;
     return ret;
 }
 
-kptr_t get_exception_osarray(const char **exceptions) {
+kptr_t get_exception_osarray(const char **exceptions, bool is_file_extension) {
     auto exception_osarray = KPTR_NULL;
     auto xmlsize = (size_t)0x1000;
     auto len = SIZE_NULL;
@@ -994,7 +989,7 @@ kptr_t get_exception_osarray(const char **exceptions) {
                 return 0;
             }
         }
-        written = sprintf(ents + xmlused, "<string>%s/</string>", *exception);
+        written = sprintf(ents + xmlused, "<string>%s%s</string>", *exception, is_file_extension ? "/" : "");
         if (written < 0) {
             SafeFreeNULL(ents);
             return 0;
@@ -1073,11 +1068,15 @@ out:;
     return ret;
 }
 
-BOOL set_sandbox_exceptions(kptr_t sandbox, const char **exceptions) {
+BOOL set_sandbox_exceptions(kptr_t sandbox) {
     auto ret = NO;
-    if (!KERN_POINTER_VALID(sandbox) || exceptions == NULL) goto out;
-    for (auto exception = exceptions; *exception; exception++) {
+    if (!KERN_POINTER_VALID(sandbox)) goto out;
+    for (auto exception = abs_path_exceptions; *exception; exception++) {
         if (!set_file_extension(sandbox, FILE_EXC_KEY, *exception))
+            goto out;
+    }
+    for (auto exception = mach_lookup_exceptions; *exception; exception++) {
+        if (!set_mach_extension(sandbox, MACH_EXC_KEY, *exception))
             goto out;
     }
     ret = YES;
@@ -1102,15 +1101,15 @@ out:;
     return ret;
 }
 
-BOOL set_amfi_exceptions(kptr_t amfi_entitlements, const char **exceptions) {
+BOOL set_amfi_exceptions(kptr_t amfi_entitlements, const char *exc_key, const char **exceptions, bool is_file_extension) {
     auto ret = NO;
     auto current_exceptions = (char **)NULL;
     if (!KERN_POINTER_VALID(amfi_entitlements) || exceptions == NULL) goto out;
-    auto const present_exception_osarray = OSDictionary_GetItem(amfi_entitlements, FILE_EXC_KEY);
+    auto const present_exception_osarray = OSDictionary_GetItem(amfi_entitlements, exc_key);
     if (present_exception_osarray == KPTR_NULL) {
-        auto osarray = get_exception_osarray(exceptions);
+        auto osarray = get_exception_osarray(exceptions, is_file_extension);
         if (!KERN_POINTER_VALID(osarray)) goto out;
-        ret = OSDictionary_SetItem(amfi_entitlements, FILE_EXC_KEY, osarray);
+        ret = OSDictionary_SetItem(amfi_entitlements, exc_key, osarray);
         OSObject_Release(osarray);
         goto out;
     }
@@ -1122,7 +1121,7 @@ BOOL set_amfi_exceptions(kptr_t amfi_entitlements, const char **exceptions) {
             continue;
         }
         const char *array[] = {*exception, NULL};
-        auto osarray = get_exception_osarray(array);
+        auto osarray = get_exception_osarray(array, is_file_extension);
         if (!KERN_POINTER_VALID(osarray)) continue;
         ret = OSArray_Merge(present_exception_osarray, osarray);
         OSObject_Release(osarray);
@@ -1135,10 +1134,11 @@ out:;
 BOOL set_exceptions(kptr_t sandbox, kptr_t amfi_entitlements) {
     auto ret = NO;
     if (KERN_POINTER_VALID(sandbox))
-        if (!set_sandbox_exceptions(sandbox, abs_path_exceptions))
+        if (!set_sandbox_exceptions(sandbox))
             goto out;
     if (KERN_POINTER_VALID(amfi_entitlements))
-        if (!set_amfi_exceptions(amfi_entitlements, abs_path_exceptions))
+        if (!set_amfi_exceptions(amfi_entitlements, FILE_EXC_KEY, abs_path_exceptions, true) ||
+            !set_amfi_exceptions(amfi_entitlements, MACH_EXC_KEY, mach_lookup_exceptions, false))
             goto out;
     ret = YES;
 out:;
@@ -1241,7 +1241,6 @@ BOOL restore_kernel_base(uint64_t *out_kernel_base, uint64_t *out_kernel_slide) 
     *task_dyld_info_count = TASK_DYLD_INFO_COUNT;
     kr = task_info(tfp0, TASK_DYLD_INFO, (task_info_t)task_dyld_info, task_dyld_info_count);
     if (kr != KERN_SUCCESS) goto out;
-    if (task_dyld_info->all_image_info_size > MAX_KASLR_SLIDE) goto out;
     *kernel_task_slide = task_dyld_info->all_image_info_size;
     *kernel_task_base = *kernel_task_slide + STATIC_KERNEL_BASE_ADDRESS;
     *out_kernel_base = *kernel_task_base;
@@ -1609,6 +1608,24 @@ out:;
     SafeFreeNULL(task_dyld_info);
     SafeFreeNULL(task_dyld_info_count);
     SafeFreeNULL(cache);
+    return ret;
+}
+
+int issue_extension_for_mach_service(kptr_t sb, kptr_t ctx, const char *entry_name, void *desc) {
+    auto ret = -1;
+    auto entry_name_kstr = KPTR_NULL;
+    auto desc_kstr = KPTR_NULL;
+    if (!KERN_POINTER_VALID(sb) || entry_name == NULL || desc == NULL) goto out;
+    auto const function = getoffset(issue_extension_for_mach_service);
+    if (!KERN_POINTER_VALID(function)) goto out;
+    entry_name_kstr = kstralloc(entry_name);
+    if (!KERN_POINTER_VALID(entry_name_kstr)) goto out;
+    desc_kstr = kstralloc(desc);
+    if (!KERN_POINTER_VALID(desc_kstr)) goto out;
+    ret = (int)kexec(function, sb, ctx, entry_name_kstr, desc_kstr, KPTR_NULL, KPTR_NULL, KPTR_NULL);
+out:;
+    if (KERN_POINTER_VALID(entry_name_kstr)) kstrfree(entry_name_kstr); entry_name_kstr = KPTR_NULL;
+    if (KERN_POINTER_VALID(desc_kstr)) kstrfree(desc_kstr); desc_kstr = KPTR_NULL;
     return ret;
 }
 
