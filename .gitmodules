@@ -1,0 +1,3 @@
+[submodule "external/offset-cache"]
+	path = external/offset-cache
+	url = https://github.com/sbingner/offset-cache.git
