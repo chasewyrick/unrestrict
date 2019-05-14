@@ -3,12 +3,12 @@ OUTDIR ?= bin
 DSYMDIR ?= dsym
 PREFIX ?= /Library/MobileSubstrate/ServerPlugins
 ARCHS  ?= arm64 arm64e
-SRC	= src/main.c src/KernelMemory.c src/KernelUtilities.c src/KernelExecution.c src/KernelOffsets.c src/utils.c src/kernel_call/kc_parameters.c src/kernel_call/kernel_alloc.c src/kernel_call/kernel_call.c src/kernel_call/kernel_memory.c src/kernel_call/kernel_slide.c src/kernel_call/log.c src/kernel_call/pac.c src/kernel_call/parameters.c src/kernel_call/platform.c src/kernel_call/platform_match.c src/kernel_call/user_client.c external/offset-cache/offsetcache.c
+SRC	= src/main.c src/KernelMemory.c src/KernelUtilities.c src/KernelExecution.c src/KernelOffsets.c src/utils.c src/kernel_call/kc_parameters.c src/kernel_call/kernel_alloc.c src/kernel_call/kernel_call.c src/kernel_call/kernel_memory.c src/kernel_call/kernel_slide.c src/kernel_call/log.c src/kernel_call/pac.c src/kernel_call/parameters.c src/kernel_call/platform.c src/kernel_call/platform_match.c src/kernel_call/user_client.c external/offset-cache/offsetcache.c external/patchfinder64/patchfinder64.c
 OBJ	= $(SRC:.c=.o)
 
 CC      = xcrun -sdk iphoneos gcc $(patsubst %,-arch %,$(ARCHS))
 LDID    = ldid
-CFLAGS  = -Iinclude -Isrc -Isrc/kernel_call -Iexternal/offset-cache -Wno-deprecated-declarations -DHAVE_MAIN -g
+CFLAGS  = -Iinclude -Isrc -Isrc/kernel_call -Iexternal/offset-cache -Iexternal/patchfinder64 -Wno-deprecated-declarations -DHAVE_MAIN -g
 LDFLAGS = -framework IOKit -framework CoreFoundation
 
 ifeq ($(DEBUG),1)

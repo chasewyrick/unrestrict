@@ -65,6 +65,7 @@ kptr_t kernel_base = KPTR_NULL;
 kptr_t offset_options = KPTR_NULL;
 BOOL found_offsets = NO;
 kptr_t cached_task_self_addr = KPTR_NULL;
+static BOOL weird_offsets = NO;
 
 #define find_port(port, disposition) (have_kmem_read() && found_offsets ? get_address_of_port(getpid(), port) : KPTR_NULL)
 
@@ -1049,6 +1050,14 @@ char **copy_amfi_entitlements(kptr_t present) {
 
 kptr_t getOSBool(BOOL value) {
     auto ret = KPTR_NULL;
+    if (weird_offsets) {
+        if (value) {
+            ret = getoffset(OSBoolean_True);
+        } else {
+            ret = getoffset(OSBoolean_False);
+        }
+        goto out;
+    }
     auto const symbol = getoffset(OSBoolean_True);
     if (!KERN_POINTER_VALID(symbol)) goto out;
     auto OSBool = ReadKernel64(symbol);
@@ -1329,8 +1338,8 @@ BOOL restore_file_offset_cache(const char *offset_cache_file_path, kptr_t *out_k
     restore_offset("KernelBase", offset_kernel_base);
     restore_offset("KernelSlide", offset_kernel_slide);
     restore_and_set_offset("TrustChain", "trustcache");
-    restore_and_set_offset("OSBooleanTrue", "OSBooleanTrue");
-    restore_and_set_offset("OSBooleanFalse", "OSBooleanFalse");
+    restore_and_set_offset("OSBooleanTrue", "OSBoolean_True");
+    restore_and_set_offset("OSBooleanFalse", "OSBoolean_False");
     restore_and_set_offset("OSUnserializeXML", "osunserializexml");
     restore_and_set_offset("Smalloc", "smalloc");
     restore_and_set_offset("AddRetGadget", "add_x0_x0_0x40_ret");
@@ -1370,6 +1379,7 @@ BOOL restore_file_offset_cache(const char *offset_cache_file_path, kptr_t *out_k
 #undef restore_and_set_offset
     *out_kernel_base = offset_kernel_base;
     *out_kernel_slide = offset_kernel_slide;
+    weird_offsets = YES;
     found_offsets = YES;
     restored_file_offset_cache = YES;
 out:;

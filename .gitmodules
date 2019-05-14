@@ -1,3 +1,6 @@
 [submodule "external/offset-cache"]
 	path = external/offset-cache
 	url = https://github.com/sbingner/offset-cache.git
+[submodule "external/patchfinder64"]
+	path = external/patchfinder64
+	url = https://github.com/sbingner/patchfinder64.git
